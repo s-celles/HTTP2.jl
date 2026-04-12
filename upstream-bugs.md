@@ -36,11 +36,19 @@ Entries are added in reverse-chronological order (newest first).
   handler returning `ServerResponse(200, "hello")` will be seen
   by a client as a 200 response with an empty body.
 - **Upstream link**:
-  <https://github.com/s-celles/Nghttp2Wrapper.jl> —
-  `src/server.jl:404` in the commit pinned by HTTP2.jl's
-  `test/interop/` env (`a3dbdfb548c3d4bfbf4ddfce2a835a990f19dcc2`).
-  Upstream fix will need to plumb a `data_provider` callback
-  that reads from `resp.body`.
+  <https://github.com/s-celles/Nghttp2Wrapper.jl/issues> —
+  specific issue URL TBD. Milestone 7 release prep attempted to
+  file a GitHub issue at `s-celles/Nghttp2Wrapper.jl` but the
+  filing step could not be automated from the release workflow
+  (interactive GitHub authentication required). The issue is
+  scheduled to be filed manually by the maintainer as a
+  post-release follow-up; this field will be updated to the
+  specific issue URL in the next patch release. Source
+  reference: `src/server.jl:404` in the commit pinned by
+  HTTP2.jl's `test/interop/` env
+  (`a3dbdfb548c3d4bfbf4ddfce2a835a990f19dcc2`). Upstream fix
+  will need to plumb a `data_provider` callback that reads from
+  `resp.body`.
 - **Impact on HTTP2.jl**: at Milestone 6 the new
   `Interop: h2c live TCP client` item cross-tests HTTP2.jl's
   client-role entry point (`open_connection!`) against
@@ -71,9 +79,16 @@ Entries are added in reverse-chronological order (newest first).
   TLS server cannot choose a protocol from the list advertised by
   a connecting client, which is the whole point of ALPN on the
   server side.
-- **Upstream link**: <https://github.com/JuliaWeb/OpenSSL.jl> —
-  no specific issue filed yet; follow-up TODO to open one citing
-  RFC 7301 §3.2 and linking this entry.
+- **Upstream link**:
+  <https://github.com/JuliaWeb/OpenSSL.jl/issues> — specific
+  issue URL TBD. Milestone 7 release prep attempted to file a
+  GitHub issue at `JuliaWeb/OpenSSL.jl` but the filing step
+  could not be automated from the release workflow (interactive
+  GitHub authentication required on a third-party repository).
+  The issue is scheduled to be filed manually by the maintainer
+  as a post-release follow-up citing RFC 7301 §3.2 and this
+  entry; this field will be updated to the specific issue URL
+  in the next patch release.
 - **Impact on HTTP2.jl**: server-side `h2` (HTTP/2 over TLS) is
   blocked at Milestone 5. HTTP2.jl is server-role only until
   Milestone 6, and without the selection callback the server
