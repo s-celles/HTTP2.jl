@@ -16,6 +16,7 @@ makedocs(;
         "Streams" => "streams.md",
         "Connection" => "connection.md",
         "Flow control" => "flow-control.md",
+        "Interop parity" => "nghttp2-parity.md",
         "API Reference" => "api.md",
     ],
     checkdocs = :exports,

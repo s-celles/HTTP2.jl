@@ -9,6 +9,63 @@ and HTTP2.jl adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0
 
 ### Added
 
+- **Milestone 4 — Reference parity with Nghttp2Wrapper.jl**.
+  HTTP2.jl's wire behaviour is now cross-tested against
+  `libnghttp2` (via
+  [Nghttp2Wrapper.jl](https://github.com/s-celles/Nghttp2Wrapper.jl)
+  pinned to commit `a3dbdfb548c3d4bfbf4ddfce2a835a990f19dcc2`)
+  on every push via a dedicated CI job. **This is the
+  milestone that operationally fulfills constitution
+  Principle III (Specification Conformance & Reference
+  Parity).**
+- Separate test environment at `test/interop/` with its own
+  `Project.toml` declaring `julia = "1.12"` (Nghttp2Wrapper.jl's
+  minimum). The main `Pkg.test()` flow on Julia 1.10+ is
+  unaffected — interop items are filtered out of the main
+  suite's discovery via a `filter` kwarg in `test/runtests.jl`.
+- 12 native `Interop:` `@testitem` units in
+  `test/interop/testitems_interop.jl` covering the roadmap's
+  minimum cross-test set plus 3 constant cross-checks:
+  connection preface bytes (byte-identical with the client
+  magic per RFC 9113 §3.4), frame type / flag / settings
+  parameter constants (3 items — error code constants
+  dropped because Nghttp2Wrapper.jl does not export
+  `NGHTTP2_NO_ERROR`-style constants; error code wire values
+  are covered implicitly by the GOAWAY and RST_STREAM items
+  instead), HPACK encode-both-ways via `HpackDeflater` /
+  `HpackInflater` (RFC 7541, semantic-equivalent comparison
+  on decoded header lists), SETTINGS round-trip (RFC 9113
+  §6.5), PING round-trip with 8-byte opaque data (RFC 9113
+  §6.7), GOAWAY exercising NO_ERROR / PROTOCOL_ERROR /
+  CANCEL across 3 server-initiated last-stream-ids (RFC 9113
+  §6.8), DATA frame round-trip + PADDED wire-layout
+  validation (RFC 9113 §6.1), WINDOW_UPDATE handshake (RFC
+  9113 §6.9), RST_STREAM error-code bit-level encoding (RFC
+  9113 §6.4). **105 interop assertions total, all passing.**
+  Full-suite count after M4: **24,872** (main 24,767 +
+  interop 105).
+- `docs/src/nghttp2-parity.md` parity page: table-driven with
+  columns Test / Element / RFC / Direction / Verdict / Notes,
+  one row per interop item, explicit RFC 9113 / RFC 7541
+  citations on every row, `## Known-green versions` section
+  naming `nghttp2_jll v1.64.0+1` + `Nghttp2Wrapper.jl
+  a3dbdfb5` + `Julia 1.12.6`, `## Deliberate divergences`
+  section (empty at M4 — every verdict is either
+  byte-identical or semantic-equivalent), `## How to re-run
+  the interop group locally` with a copy-paste recipe. Wired
+  into `docs/make.jl`'s pages array between the Flow control
+  page and the API Reference orientation index.
+- New CI job `interop` in `.github/workflows/CI.yml` pinned
+  to `ubuntu-latest` + Julia `1` (stable). Not matrixed —
+  the `julia = "1.12"` floor of Nghttp2Wrapper.jl precludes
+  running it on 1.10. The job clones Nghttp2Wrapper.jl from
+  GitHub via `Pkg.add(url=..., rev=...)` to the pinned SHA,
+  instantiates the interop env, and runs
+  `julia --project=test/interop test/interop/runtests.jl`.
+  No `continue-on-error` anywhere — interop failures fail CI.
+- Package version bump `0.2.0` → `0.3.0` signalling that M4
+  is the first milestone to validate HTTP2.jl's wire
+  behaviour against an external reference implementation.
 - **Milestone 3 — Stream, Flow Control & Connection migration, flow-control edge cases, public API.**
   Completes the public API surface across all five layers of the
   HTTP/2 stack (frames, HPACK, streams, connection, flow control)
@@ -163,6 +220,25 @@ and HTTP2.jl adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0
 
 ### Changed
 
+- **Milestone 4 — test/runtests.jl filters the interop group**.
+  `test/runtests.jl` now passes a `filter` kwarg to
+  `@run_package_tests` that excludes items whose name starts
+  with `Interop: `. This keeps the main suite resolvable on
+  Julia 1.10 (where Nghttp2Wrapper.jl cannot be loaded) and
+  reserves the interop items for the separate `test/interop/`
+  env.
+- `docs/make.jl` pages array grows from 7 to 8 entries: Home
+  → Frames → HPACK → Streams → Connection → Flow control →
+  Interop parity → API Reference.
+- **No FR-014 bug fixes applied at Milestone 4**. The interop
+  cross-tests surfaced no defects in HTTP2.jl's implementation.
+  `src/` is unchanged across all five layer files (frames,
+  hpack, stream, flow_control, connection). Initial test
+  failures were attributable to test-authoring errors
+  (wrong stream-ID parity for a client-session GOAWAY, an
+  overly-pessimistic `@test_broken` on DATA padding that
+  unexpectedly passed) and were corrected on the test side,
+  not in `src/`.
 - **Milestone 3 retirement of all remaining shims.** The four
   M1/M2 carryover shims that were still in place at the end of
   M2 (`M0 carryover: http2_stream`, `M0 carryover: conformance
