@@ -2,6 +2,14 @@
 HTTP2 = "7d1e1b98-28e7-4969-8df9-5a308937986a"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Nghttp2Wrapper = "aac3f40a-7475-434e-9d89-bbdc1574c652"
+# OpenSSL is needed by the ALPN / TLS interop testitems
+# (`Interop: ALPN helper with OpenSSL extension` and
+# `Interop: set_alpn_h2! live TLS handshake`). At M5 it was
+# reached transitively via Nghttp2Wrapper's deps, but the [sources]
+# + Pkg.instantiate() flow in M7 only surfaces direct deps, so it
+# must be listed explicitly for `using OpenSSL` inside @testitem
+# blocks to resolve.
+OpenSSL = "4d8831e6-92b7-49fb-bdf8-b643e874388c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
 
