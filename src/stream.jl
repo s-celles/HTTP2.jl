@@ -67,6 +67,25 @@ Represents an HTTP/2 stream with state machine and data buffers.
 - `end_stream_received::Bool`: Whether END_STREAM has been received
 - `end_stream_sent::Bool`: Whether END_STREAM has been sent
 - `reset::Bool`: Whether stream has been reset
+
+# Example
+
+```jldoctest
+julia> using HTTP2
+
+julia> stream = HTTP2Stream(UInt32(1));
+
+julia> stream.state == StreamState.IDLE
+true
+
+julia> receive_headers!(stream, false);
+
+julia> stream.state == StreamState.OPEN
+true
+
+julia> can_send(stream)
+true
+```
 """
 mutable struct HTTP2Stream
     id::UInt32

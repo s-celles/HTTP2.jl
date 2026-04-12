@@ -4,15 +4,36 @@
 # Note: frames.jl must be included before this file
 
 """
-    FlowControlWindow
+    FlowControlWindow(initial_size::Int = DEFAULT_INITIAL_WINDOW_SIZE)
 
-Manages HTTP/2 flow control windows at connection or stream level.
+A single HTTP/2 flow-control window (RFC 9113 §5.2). Can represent
+either a connection-level window or a stream-level window. Thread-
+safe via an internal `ReentrantLock`.
 
 # Fields
 - `available::Int`: Available window size
 - `initial_size::Int`: Initial window size
 - `pending_updates::Int`: Pending WINDOW_UPDATE bytes to send
 - `lock::ReentrantLock`: Thread-safe access
+
+# Example
+
+```jldoctest
+julia> using HTTP2
+
+julia> window = FlowControlWindow(65535);
+
+julia> consume!(window, 1000)
+true
+
+julia> available(window)
+64535
+
+julia> release!(window, 1000);
+
+julia> available(window)
+65535
+```
 """
 mutable struct FlowControlWindow
     available::Int

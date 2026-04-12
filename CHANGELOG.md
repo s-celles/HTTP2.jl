@@ -9,6 +9,67 @@ and HTTP2.jl adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0
 
 ### Added
 
+- **Milestone 3 — Stream, Flow Control & Connection migration, flow-control edge cases, public API.**
+  Completes the public API surface across all five layers of the
+  HTTP/2 stack (frames, HPACK, streams, connection, flow control)
+  and retires every M1/M2 carryover shim.
+- 21 native `@testitem` units for the stream state machine in
+  `test/testitems_stream.jl`, replacing three M1/M2 shims
+  (`M0 carryover: http2_stream`, `M0 carryover:
+  stream_state_validation`, and the stream-state-machine part of
+  `M0 carryover: conformance`). Item names use the `Stream: *`
+  prefix — contributors can filter for
+  `receive_headers transitions`, `RST_STREAM`, `gRPC header
+  helpers`, etc. in isolation.
+- 5 native `@testitem` units for the connection lifecycle in
+  `test/testitems_connection.jl`, replacing the `M0 carryover:
+  connection_management` shim and the preface-processing part of
+  the conformance shim. The M0 upstream task labels
+  (`T037`–`T041`) are renamed to concern-level names:
+  `Connection: preface handshake`, `Connection: PING handling`,
+  `Connection: GOAWAY handling`, `Connection: connection-level
+  flow control`, `Connection: stream management`.
+- **8 newly authored `Flow: *` `@testitem` units** in
+  `test/testitems_flow_control.jl` — the first dedicated
+  flow-control coverage in HTTP2.jl's history. Upstream
+  gRPCServer.jl had no flow-control test file; these 8 items
+  were authored from scratch at M3 and cover: window consume and
+  release, zero-window edge, 2^31 − 1 overflow protection,
+  WINDOW_UPDATE threshold semantics, initial-size delta
+  application, stream-vs-connection window interaction,
+  SETTINGS-driven initial-window-size change propagation, and
+  `DataSender` frame splitting. **All 8 pass on first run — no
+  FR-011(c) bug fixes were needed.** 58 new flow-control
+  assertions.
+- Three new documentation pages: `docs/src/streams.md`,
+  `docs/src/connection.md`, `docs/src/flow-control.md`. Each
+  has a narrative introduction, a **`## Role signalling`**
+  section naming whether the layer is server-only, role-neutral,
+  or client-ready, and `@docs` blocks covering every exported
+  symbol.
+- Three new `jldoctest` examples — one per stateful layer —
+  attached to `HTTP2Stream` (state transition round-trip),
+  `HTTP2Connection` (preface processing), and
+  `FlowControlWindow` (consume + release cycle). All executed by
+  Documenter 1.x at build time. Total doctests after M3: **5**
+  (2 from M2 + 3 from M3).
+- Export block in `src/HTTP2.jl` extended with **79 new symbols**
+  across the stream, connection, and flow-control layers. Total
+  exports after M3: **119** (up from 40 at M2).
+- Role signalling summary table added to `docs/src/api.md` —
+  the orientation index now answers "what does HTTP2.jl support
+  from a client context today?" at a glance, with a forward
+  reference to Milestone 6 for client-role symmetry.
+- `upstream-bugs.md` entry **gRPC-specific header helpers live in
+  src/stream.jl** recording the layering concern inherited from
+  the M0 extraction: `get_grpc_encoding`,
+  `get_grpc_accept_encoding`, `get_grpc_timeout`, and
+  `get_metadata` are gRPC-layer concepts that conceptually belong
+  in a gRPC adapter, not in a pure HTTP/2 library. The entry is
+  `open` and points at a future layering-cleanup milestone.
+- Package version bump `0.1.0` → `0.2.0` signalling that
+  HTTP2.jl now has a complete public API across all five layers.
+  No tagged release — Milestone 7 is still the release target.
 - **Milestone 2 — Frames & HPACK migration, conformance, public API.**
   HTTP2.jl now has a formal public API surface for the frames and HPACK
   layers. See the `Frames` and `HPACK` pages in the documentation and
@@ -102,6 +163,41 @@ and HTTP2.jl adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0
 
 ### Changed
 
+- **Milestone 3 retirement of all remaining shims.** The four
+  M1/M2 carryover shims that were still in place at the end of
+  M2 (`M0 carryover: http2_stream`, `M0 carryover: conformance
+  (stream/preface, pending M3)`, `M0 carryover:
+  stream_state_validation`, `M0 carryover: connection_management`)
+  are all retired. Their content is fully represented by the
+  21 `Stream:` and 5 `Connection:` native test items.
+  `test/testitems.jl` (the shim file) is **deleted** — no `M0
+  carryover:` items remain in the test discovery list.
+- **M3 deletions of the four M0 carryover test files** now that
+  their content lives in native `@testitem` files: deleted
+  `test/test_http2_stream.jl` (→ `testitems_stream.jl`),
+  `test/test_http2_conformance.jl` (→
+  `testitems_stream.jl` and `testitems_connection.jl`),
+  `test/test_stream_state_validation.jl` (→
+  `testitems_stream.jl`), and `test/test_connection_management.jl`
+  (→ `testitems_connection.jl`).
+- `docs/src/api.md` refactored into a **five-page orientation
+  index**. Previous `@docs` blocks that covered stream, connection,
+  and flow-control symbols on this page have moved to the
+  dedicated layer pages (`streams.md`, `connection.md`,
+  `flow-control.md`); `api.md` now contains a one-paragraph
+  introduction, a bulleted list linking to all five layer pages,
+  and a role-coverage summary table. (FR-015 resolved.)
+- `docs/make.jl`'s `pages = [...]` array grew from 4 entries to
+  7: Home → Frames → HPACK → Streams → Connection → Flow
+  control → API Reference.
+- `upstream-bugs.md` lost its `_(none yet)_` placeholder and
+  gained its first entry (see the gRPC-helpers bullet under
+  `### Added` above).
+- `HTTP2Connection` docstring refined to state explicitly that
+  it is currently server-role only and that client-role setup
+  is scheduled for Milestone 6. `FlowControlWindow` docstring
+  refined to cite RFC 9113 §5.2 and note the thread-safety
+  guarantee. (FR-011(a) docstring refinements.)
 - **Milestone 2 restructuring of the test tree.** Deleted
   `test/test_hpack.jl` (fully migrated to `test/testitems_hpack.jl`).
   Reduced `test/test_http2_conformance.jl` to only its Stream state

@@ -133,9 +133,14 @@ function to_frame(settings::ConnectionSettings)::Frame
 end
 
 """
-    HTTP2Connection
+    HTTP2Connection()
 
-Manages an HTTP/2 connection.
+Manages an HTTP/2 server-role connection. Freshly constructed
+connections start in the `PREFACE` state and transition to `OPEN`
+after [`process_preface`](@ref) successfully processes the client
+connection preface.
+
+Client-role connection setup is scheduled for Milestone 6.
 
 # Fields
 - `state::ConnectionState.T`: Connection state
@@ -151,6 +156,25 @@ Manages an HTTP/2 connection.
 - `goaway_received::Bool`: Whether GOAWAY has been received
 - `pending_settings_ack::Bool`: Whether we're waiting for SETTINGS ACK
 - `lock::ReentrantLock`: Thread-safe access
+
+# Example
+
+```jldoctest
+julia> using HTTP2
+
+julia> conn = HTTP2Connection();
+
+julia> conn.state == ConnectionState.PREFACE
+true
+
+julia> success, frames = process_preface(conn, Vector{UInt8}(CONNECTION_PREFACE));
+
+julia> success
+true
+
+julia> conn.state == ConnectionState.OPEN
+true
+```
 """
 mutable struct HTTP2Connection
     state::ConnectionState.T
