@@ -531,3 +531,149 @@ end
     long_name = repeat("a", 256)
     @test_throws ArgumentError HTTP2.set_alpn_h2!(ctx, [long_name])
 end
+
+@testitem "Interop: h2c live TCP client" begin
+    using HTTP2, Nghttp2Wrapper, Sockets
+
+    # Milestone 6 — first live cross-test of HTTP2.open_connection!
+    # over a real Sockets.TCPSocket against a Nghttp2Wrapper.jl
+    # HTTP2Server. This is the symmetric complement of M5's
+    # "Interop: h2c live TCP handshake" item (HTTP2.jl as server vs
+    # Nghttp2Wrapper as client). It operationally fulfills
+    # constitution Principle III for the client role.
+    server = Nghttp2Wrapper.HTTP2Server(0; host="127.0.0.1") do _req
+        Nghttp2Wrapper.ServerResponse(200, "hello from nghttp2")
+    end
+
+    try
+        port = getsockname(server.listener)[2]
+        @test port > 0
+
+        # Give the accept loop a moment to be ready.
+        sleep(0.05)
+
+        tcp = connect(IPv4(0x7f000001), port)
+        try
+            conn = HTTP2.HTTP2Connection()
+            result = HTTP2.open_connection!(conn, tcp;
+                request_headers = Tuple{String, String}[
+                    (":method", "GET"),
+                    (":path", "/"),
+                    (":scheme", "http"),
+                    (":authority", "127.0.0.1:$port"),
+                ])
+
+            # Status and headers cross the wire; the body does
+            # NOT because Nghttp2Wrapper.HTTP2Server calls
+            # nghttp2_submit_response2 with a C_NULL data provider
+            # (see upstream-bugs.md entry added at M6). The round
+            # trip of preface + SETTINGS + HEADERS request +
+            # HEADERS response + END_STREAM is the Principle III
+            # cross-test — body parity is deferred pending the
+            # upstream fix.
+            @test result.status == 200
+            @test length(result.headers) >= 1
+            @test result.headers[1] == (":status", "200")
+            # When the upstream fix lands, flip this to an
+            # equality check with "hello from nghttp2".
+            @test isempty(result.body)
+        finally
+            close(tcp)
+        end
+    finally
+        close(server)
+    end
+end
+
+@testitem "Interop: set_alpn_h2! live TLS handshake" begin
+    using HTTP2, Nghttp2Wrapper, OpenSSL, Sockets
+
+    # Milestone 6 — promote M5's set_alpn_h2! scaffold to live-
+    # tested by actually performing a TLS handshake against a
+    # real peer and observing that "h2" was selected by ALPN.
+    #
+    # Uses a self-signed cert fixture at test/fixtures/selfsigned.*
+    # and disables client cert verification for the in-test
+    # handshake.
+    cert_path = joinpath(@__DIR__, "..", "fixtures", "selfsigned.crt")
+    key_path = joinpath(@__DIR__, "..", "fixtures", "selfsigned.key")
+
+    if !isfile(cert_path) || !isfile(key_path)
+        @warn "TLS fixture cert missing — skipping live TLS ALPN item. Generate via: openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -days 3650 -keyout $key_path -out $cert_path"
+        @test_broken false
+        return
+    end
+
+    server = Nghttp2Wrapper.HTTP2Server(0;
+        host = "127.0.0.1",
+        certfile = cert_path,
+        keyfile = key_path) do _req
+        Nghttp2Wrapper.ServerResponse(200, "hello h2 tls")
+    end
+
+    try
+        port = getsockname(server.listener)[2]
+        @test port > 0
+        sleep(0.05)
+
+        # Client-side: configure ALPN to advertise h2 via
+        # HTTP2OpenSSLExt, then connect over TLS.
+        ctx = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
+        returned = HTTP2.set_alpn_h2!(ctx)
+        @test returned === ctx
+
+        tcp = connect(IPv4(0x7f000001), port)
+        try
+            tls = OpenSSL.SSLStream(ctx, tcp)
+            # The in-test server cert is self-signed; disable
+            # verification at connect time so the handshake can
+            # complete without a CA bundle.
+            OpenSSL.connect(tls; require_ssl_verification=false)
+
+            # After the handshake, ALPN negotiation state lives on
+            # the SSL object. OpenSSL.jl does not yet export an
+            # accessor for the selected ALPN protocol, so we use a
+            # direct ccall to SSL_get0_alpn_selected.
+            #
+            # What this test proves: HTTP2.set_alpn_h2! via the
+            # HTTP2OpenSSLExt extension successfully installed the
+            # RFC 7301 §3.1 wire format on a client SSLContext,
+            # and that context then completed a real TLS handshake
+            # against a live peer. The client-side of the ALPN
+            # protocol reached OpenSSL and was accepted.
+            #
+            # What this test does NOT prove (yet): that the server
+            # selected "h2" from our advertised list. Nghttp2Wrapper's
+            # HTTP2Server uses OpenSSL.ssl_set_alpn on a server
+            # context, which wraps SSL_CTX_set_alpn_protos — that
+            # is the CLIENT-side API and a no-op on a server
+            # context. The server-side selection requires
+            # SSL_CTX_set_alpn_select_cb, which OpenSSL.jl does not
+            # yet bind. See upstream-bugs.md for the full chain.
+            # The @test_broken below will flip to @test once the
+            # upstream gap is closed.
+            proto_ptr = Ref{Ptr{UInt8}}(C_NULL)
+            proto_len = Ref{Cuint}(0)
+            ccall((:SSL_get0_alpn_selected, OpenSSL.libssl), Cvoid,
+                  (OpenSSL.SSL, Ref{Ptr{UInt8}}, Ref{Cuint}),
+                  tls.ssl, proto_ptr, proto_len)
+
+            selected = if proto_len[] > 0
+                unsafe_string(proto_ptr[], Int(proto_len[]))
+            else
+                ""
+            end
+
+            @test_broken selected == "h2"
+
+            try
+                close(tls)
+            catch
+            end
+        finally
+            close(tcp)
+        end
+    finally
+        close(server)
+    end
+end

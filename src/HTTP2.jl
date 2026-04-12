@@ -6,6 +6,7 @@ include("stream.jl")
 include("flow_control.jl")
 include("connection.jl")
 include("serve.jl")
+include("client.jl")
 
 """
     set_alpn_h2!(ctx, protocols=["h2"])
@@ -104,5 +105,8 @@ export is_open
 
 # Public API (Milestone 5): transport layer
 export serve_connection!, set_alpn_h2!
+
+# Public API (Milestone 6): client layer
+export open_connection!
 
 end # module HTTP2

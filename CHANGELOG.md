@@ -7,6 +7,111 @@ and HTTP2.jl adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0
 
 ## [Unreleased]
 
+### Added (Milestone 6)
+
+- **Milestone 6 — Client-role completion**. HTTP2.jl gains its
+  client half: a symmetric counterpart to M5's
+  `serve_connection!`. **This milestone operationally fulfills
+  constitution Principle III for the client role** — HTTP2.jl's
+  client wire behavior is now cross-tested against `libnghttp2`
+  in a live TCP round trip.
+- New public function `HTTP2.open_connection!(conn::HTTP2Connection,
+  io::IO; request_headers, request_body=nothing,
+  max_frame_size=DEFAULT_MAX_FRAME_SIZE, read_timeout=nothing)`
+  in `src/client.jl`. Drives a client-role HTTP/2 connection
+  over any `Base.IO` transport satisfying the IO adapter
+  contract: writes preface + initial SETTINGS with
+  `SETTINGS_ENABLE_PUSH = 0`, sends the request HEADERS (plus
+  optional DATA), reads the response HEADERS/CONTINUATION/DATA
+  into a local `ClientStreamState`, and returns a
+  `NamedTuple{(:status, :headers, :body)}`. Handles graceful
+  GOAWAY, `RST_STREAM`, `FRAME_SIZE_ERROR`, and unexpected
+  `PUSH_PROMISE` as protocol errors per RFC 9113 §8.4.
+- New `src/client.jl` file (~350 lines) with the
+  `ClientStreamState` private struct, a client-role frame
+  dispatcher, and 9 client-role frame handlers. The
+  dispatcher **bypasses** the server-role `process_*_frame!`
+  helpers in `src/connection.jl` — those embed server-side
+  assumptions (stream-ID parity checks,
+  `last_client_stream_id` enforcement) that are wrong for a
+  client receiving a response. Zero existing-src edits.
+- 10 new `Client:` `@testitem` units in the main env at
+  `test/testitems_client.jl`: `stream ID parity is odd`,
+  `open_connection! with BufferStream pair`,
+  `END_STREAM on response HEADERS`,
+  `server splits HEADERS across CONTINUATION`,
+  `DATA body collection`, `receive RST_STREAM`,
+  `receive GOAWAY (NO_ERROR)`,
+  `receive GOAWAY (PROTOCOL_ERROR)`,
+  `reject PUSH_PROMISE when ENABLE_PUSH=0`, and
+  `frame size exceeding max_frame_size`. All driven by paired
+  `Base.BufferStream` fixtures; no network dependency.
+- 2 new `Interop:` `@testitem` units in `test/interop/testitems_interop.jl`:
+  `Interop: h2c live TCP client` (HTTP2.jl client vs
+  Nghttp2Wrapper `HTTP2Server` over real TCP — first live
+  cross-test of the client role; operationally fulfills
+  Principle III for the client half) and
+  `Interop: set_alpn_h2! live TLS handshake` (promotes M5's
+  `set_alpn_h2!` scaffold to live-tested by performing a real
+  TLS handshake with a self-signed fixture cert against
+  `Nghttp2Wrapper.HTTP2Server` with TLS enabled; the client
+  side of the ALPN wire-format conversion is verified end-to-
+  end, while the server-side selection is `@test_broken` pending
+  the OpenSSL.jl upstream fix).
+- New `docs/src/client.md` page (~175 lines) covering: client
+  vs server role asymmetry, worked h2c example over
+  `Sockets.TCPSocket`, worked h2 example wrapping `OpenSSL.SSLStream`,
+  `@docs HTTP2.open_connection!`, error handling for GOAWAY /
+  RST_STREAM / protocol errors, and a `## Current limitations`
+  section naming single-request API, no affirmative push,
+  multi-frame body deferral, server-side TLS gap, and HTTP
+  semantics deferral.
+- New self-signed TLS fixture files `test/fixtures/selfsigned.crt`
+  + `test/fixtures/selfsigned.key` (RSA 2048, CN=localhost,
+  subjectAltName `DNS:localhost,IP:127.0.0.1`, 10-year validity)
+  for the live TLS ALPN interop item.
+- New `upstream-bugs.md` entry (newest-first) for
+  Nghttp2Wrapper.jl's `HTTP2Server` dropping response bodies
+  (`nghttp2_submit_response2` is called with a `C_NULL`
+  `data_provider`, so the server sends HEADERS with
+  `END_STREAM` and no DATA).
+
+### Changed (Milestone 6)
+
+- Version bump `0.4.0 → 0.5.0` (minor: new public API surface
+  `open_connection!`, live-test promotion of `set_alpn_h2!`,
+  no breaking changes to M0–M5 exports).
+- `src/HTTP2.jl` gains `include("client.jl")` and one new export
+  block (`Milestone 6: client layer` with `export open_connection!`);
+  no other edits to M0–M5 src files.
+- `docs/make.jl` pages array grows from 9 to 10 entries with
+  `"Client" => "client.md"` inserted between `"TLS & transport"`
+  and `"API Reference"`.
+
+### Notes (Milestone 6)
+
+- **Server-side h2 TLS remains deferred** pending the upstream
+  OpenSSL.jl `SSL_CTX_set_alpn_select_cb` binding (M5 entry in
+  `upstream-bugs.md` unchanged). The M6 live TLS interop item
+  uses `@test_broken` on the `h2` selection assertion precisely
+  because of this gap, while still verifying that the client-
+  side ALPN wire-format conversion reaches OpenSSL and the
+  handshake completes.
+- **Affirmative server push handling** is deferred beyond the
+  negative `ENABLE_PUSH=0` test. A client-side decision to
+  accept, process, or `REFUSED_STREAM`-reject pushed streams
+  is out of scope at M6.
+- **Multi-request sessions over one connection** are deferred
+  to a future milestone. `open_connection!` ships a single-
+  request API: one HEADERS frame on stream ID 1, one response,
+  one clean shutdown.
+- The `interop` CI job from M4 is unchanged — TestItemRunner's
+  file scan automatically picks up the new items.
+- **No FR-016 bug fixes were triggered at M6**. All M0–M5
+  `src/` files are unchanged except for the two permitted
+  additions to `src/HTTP2.jl` (`include("client.jl")` + new
+  export block).
+
 ### Added (Milestone 5)
 
 - **Milestone 5 — TLS & ALPN integration (h2c first, h2 scaffolded)**.

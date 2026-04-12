@@ -23,6 +23,44 @@ Entries are added in reverse-chronological order (newest first).
 
 ## Entries
 
+### Nghttp2Wrapper.jl `HTTP2Server` drops the response body
+
+- **Package**: Nghttp2Wrapper.jl
+- **Issue**: `Nghttp2Wrapper.HTTP2Server` dispatches request
+  handlers, collects the returned `ServerResponse` object, and
+  sends it via `nghttp2_submit_response2(session, stream_id,
+  nva, nvlen, C_NULL)` — the trailing `C_NULL` is the
+  `data_provider` argument. With `C_NULL`, nghttp2 submits
+  HEADERS with `END_STREAM` set and **no DATA frames**, so the
+  `ServerResponse.body` bytes never reach the client. Any
+  handler returning `ServerResponse(200, "hello")` will be seen
+  by a client as a 200 response with an empty body.
+- **Upstream link**:
+  <https://github.com/s-celles/Nghttp2Wrapper.jl> —
+  `src/server.jl:404` in the commit pinned by HTTP2.jl's
+  `test/interop/` env (`a3dbdfb548c3d4bfbf4ddfce2a835a990f19dcc2`).
+  Upstream fix will need to plumb a `data_provider` callback
+  that reads from `resp.body`.
+- **Impact on HTTP2.jl**: at Milestone 6 the new
+  `Interop: h2c live TCP client` item cross-tests HTTP2.jl's
+  client-role entry point (`open_connection!`) against
+  Nghttp2Wrapper's server and verifies the wire-level round
+  trip (preface + SETTINGS + HEADERS request + HEADERS response
+  with `:status` + graceful close). Body parity is **not**
+  verified because the body never reaches the client — the
+  test asserts `isempty(result.body)` with a comment pointing at
+  this entry. A handler that echoed headers only (empty-body
+  response) would not be affected.
+- **Workaround**: the M6 interop test accepts the empty body as
+  expected and documents the upstream gap inline. No ccall
+  workaround is attempted from HTTP2.jl — that would mask the
+  upstream defect and violate Principle I's "no ccall into
+  non-Julia protocol logic" rule. When the upstream fix lands,
+  the test's `@test isempty(result.body)` flips back to
+  `@test String(result.body) == "hello from nghttp2"`.
+- **Status**: `open` — file an issue upstream referencing
+  `src/server.jl:404` and this entry.
+
 ### OpenSSL.jl does not bind `SSL_CTX_set_alpn_select_cb`
 
 - **Package**: OpenSSL.jl
