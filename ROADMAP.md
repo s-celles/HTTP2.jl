@@ -28,20 +28,57 @@ builds, and RFC-grounded cross-tests against Nghttp2Wrapper.jl.
 | M7.5      | `0.1.0 → 0.2.0` + `v0.2.0` tag | ✅ Completed | *TBD on main merge* | 24,809 / 24,947 + 0 broken |
 | Rename    | `0.2.0 → 0.3.0` + `v0.3.0` tag | ✅ Completed (`HTTP2` → `PureHTTP2`) | *TBD on main merge* | 24,809 / 24,960 + 0 broken |
 | M8        | `0.3.0 → 0.4.0` | ✅ Completed (request-handler API) | `317dd6e` | 24,857 / 25,007 + 1 broken |
-| M9        | → `v0.5.0`      | Not started    |           |                        |
+| M9        | `0.4.0 → 0.5.0` | ✅ Completed (streaming + SSE example) | `cebd74e` | 24,910 / 25,060 + 1 broken |
+| M10       | → `v0.6.0`      | Not started    |           |                        |
 
 **Principle III (Specification Conformance & Reference Parity)** is
 operationally fulfilled for **server role** (M4, deepened at M5),
 **client role** (M6), and **server-side h2 over TLS** (M7.5 via
 Reseau.jl).
 
+## TLS backends
+
+PureHTTP2.jl supports h2 over TLS via **two independent optional
+backends**, both delivered as package extensions under `ext/` so
+the main `[deps]` stays empty (constitution Principle I). Users
+pick one based on which TLS stack they already have loaded and
+which direction of the handshake they need:
+
+| Backend | Extension | Role | Added | Rationale |
+|---|---|---|---|---|
+| **OpenSSL.jl** | `ext/PureHTTP2OpenSSLExt.jl` | Client-side ALPN helper (`set_alpn_h2!`) | M5 | Wraps `OpenSSL.ssl_set_alpn` to emit the RFC 7301 §3.1 wire format for the `h2` identifier. Suitable for TLS **clients** connecting to an h2 server. Server-side ALPN select was blocked on an upstream OpenSSL.jl binding gap — see Deferred upstream below. |
+| **Reseau.jl** | `ext/PureHTTP2ReseauExt.jl` | Server-side + client-side h2 TLS (`reseau_h2_server_config`, `reseau_h2_client_config`, `reseau_h2_connect`) | M7.5 | Reseau binds `SSL_CTX_set_alpn_select_cb` internally, which unblocks server-side ALPN negotiation. The three constructor-style helpers pre-populate `alpn_protocols = ["h2"]` on a `Reseau.TLS.Config` and hand back a ready-to-use handle. Suitable for **both** server and client roles. |
+
+Both extensions load automatically via `Base.get_extension` when
+the corresponding backend package is in the environment — no
+`using` incantations beyond `using PureHTTP2` + `using OpenSSL`
+or `using Reseau`. The shared constant
+`PureHTTP2.ALPN_H2_PROTOCOLS = ["h2"]` is exported from the main
+module as the canonical ALPN protocol list that both extensions
+consume.
+
+**Choosing between them**:
+
+- **Client only, already using OpenSSL.jl** → use
+  `PureHTTP2.set_alpn_h2!(ssl_ctx)` (M5's OpenSSL extension).
+- **Server role (any), or client role where you want a
+  single consistent TLS stack** → use the Reseau helpers
+  (M7.5's Reseau extension).
+- **Both roles, willing to take both packages** → perfectly
+  fine; the two extensions do not conflict. Each binds to its
+  own type and the method tables stay disjoint.
+
+See `docs/src/tls.md` for worked examples of both backends and
+the `docs/src/client.md` "Over TLS (h2) via PureHTTP2ReseauExt"
+subsection for the Reseau-side client pattern.
+
 **Deferred upstream** (tracked in `upstream-bugs.md`):
 
 - OpenSSL.jl: `SSL_CTX_set_alpn_select_cb` binding missing —
-  **no longer blocking PureHTTP2.jl** as of M7.5 (worked around via
-  Reseau.jl). Still a valuable upstream addition for users who
-  want the OpenSSL-only code path without Reseau as a second
-  dependency.
+  **no longer blocking PureHTTP2.jl** as of M7.5 (worked around
+  via Reseau.jl). Still a valuable upstream addition for users
+  who want an OpenSSL-only server-role code path without adding
+  Reseau as a second backend.
 - Nghttp2Wrapper.jl: `HTTP2Server` handler drops response bodies
   — **fixed upstream** at M7 via commit `c2e2a06`.
 
@@ -690,10 +727,163 @@ low-level `serve_connection!` from M5 stays unchanged.
 
 ---
 
-## Milestone 9 — gRPCServer.jl Reverse Integration
+## Milestone 9 — Streaming response bodies via `flush(res)` + SSE example ✅
+
+**Status**: Completed (commit `cebd74e`, version `0.4.0 → 0.5.0`,
+2026-04-13)
+
+Activate the M8 forward-compat reservation for **write-side
+streaming**. Handlers can now emit response body bytes as HTTP/2
+DATA frames incrementally via `Base.flush(res)` — before the
+handler function returns — unblocking Server-Sent Events feeds,
+long-running handlers with progress output, chunked downloads,
+and any use case where the buffered-only M8 shape was a
+structural limitation. Ships as a **pure addition** on top of
+M8 with zero breaking changes.
+
+- [x] New method `Base.flush(res::Response)` in
+      `src/handler.jl` (~140 lines added including ~100-line
+      docstring). Lazy HEADERS emission on first call
+      (FR-003); non-terminal DATA emission (never sets
+      `END_STREAM` — finalize does); buffer-clear after each
+      call so `write_body!` starts fresh; empty-body flush =
+      HEADERS only (first call) or total no-op (subsequent);
+      `res.finalized` guard + `res.io === nothing` defensive
+      guard; returns `res` for chaining. Not exported — reached
+      via normal `flush(...)` dispatch because `Base.flush` is
+      already in every Julia scope.
+- [x] `Response` mutable struct gains two new internal fields:
+      `io::Union{IO, Nothing}` (transport reference, set by
+      `serve_with_handler!` before handler invocation so flush
+      can reach the wire from inside the handler) and
+      `headers_sent::Bool` (commit tracker set by the first
+      flush). The public 2-arg constructor
+      `Response(conn::HTTP2Connection, stream_id::UInt32)`
+      signature is unchanged — both new fields default-initialize
+      to `nothing` and `false` respectively.
+- [x] `set_status!` and `set_header!` gain a new no-op branch:
+      when the response HEADERS have already been emitted on
+      the wire (by a prior `flush(res)` call), these mutators
+      log `@warn "Response headers already on the wire"` and
+      return `res` unchanged. Handlers that never call `flush`
+      (the v0.4.0 buffered-only shape) see no change — the new
+      branch is additive. `write_body!` stays unchanged and
+      still appends to the now-emptied buffer for the next
+      flush.
+- [x] `_finalize_response!` branches on `res.headers_sent`:
+      **Branch A** (`false`, buffered path) is byte-identical
+      to M8; **Branch B** (`true`, streaming path) skips
+      HEADERS and emits either a terminal DATA frame with
+      `END_STREAM` (body non-empty) or a zero-length DATA
+      frame with `END_STREAM` (body empty — wire-legal per
+      RFC 9113 §6.1). One bug surfaced during implementation:
+      `send_data_frames`'s inner loop is `while remaining > 0`,
+      so an empty body produces no frames at all — the
+      streaming finalize path builds the terminal frame
+      explicitly via
+      `data_frame(stream_id, UInt8[]; end_stream=true)` and
+      updates stream state with `send_data!(stream, 0, true)`.
+- [x] 8 new `Handler:`-prefixed `@testitem` units appended to
+      `test/testitems_handler.jl` (~580 lines of test code):
+      (1) single flush emits DATA before handler return —
+      cooperative `Channel` coordination for deterministic
+      timing without wall-clock fragility; (2) multiple flushes
+      emit distinct DATA frames; (3) buffered-only handler
+      wire-identical to M8 — byte-equivalence regression guard
+      against a hand-rolled `send_headers`+`send_data` probe
+      emission; (4) `set_status!` post-flush no-op with warn;
+      (5) `set_header!` post-flush no-op with warn;
+      (6) `write_body!` still works post-flush — regression
+      surface for buffer reuse; (7) flush then throw emits
+      `RST_STREAM` — verifies HEADERS + DATA(partial) +
+      `RST_STREAM(INTERNAL_ERROR)`, no terminal `END_STREAM`;
+      (8) connection survives streaming handler throw — second
+      interleaved stream succeeds normally.
+- [x] M8 `Handler: forward-compat extension points documented`
+      inspection testitem updated: asserts the live
+      `## Streaming` section + `Base.flush` reference while
+      preserving the `Base.read(req` read-side reservation.
+- [x] New `examples/sse/` directory: `server.jl` (53 lines,
+      zero frame-layer symbols) emits 5 `data: tick N\n\n`
+      events at 1-second intervals on path `/ticks` using
+      `flush(res)` + `sleep(1.0)` in a loop; 404 on other
+      paths uses the buffered path (doubling as a live
+      FR-009 regression exercise). `README.md` with
+      `curl -N --http2-prior-knowledge` verification recipe,
+      explanation of the generic-flush-primitive-vs-SSE-client-
+      protocol distinction, variants for different tick counts
+      or infinite streams. No Julia client — curl serves as
+      the streaming client because `open_connection!` blocks
+      until `END_STREAM` and would hide streaming on the read
+      side. A Julia-native streaming client is deferred to
+      the `Base.read(req, n)` extension point milestone.
+- [x] `docs/src/handler.md` "Future: streaming" subsection
+      promoted to a live `## Streaming` top-level section
+      (~120 lines replacing ~24 lines of M8 stub) containing
+      prose, a worked example sourced from
+      `examples/sse/server.jl`, an
+      `@docs Base.flush(::PureHTTP2.Response)` block rendering
+      the in-source docstring, "Lazy HEADERS emission"
+      subsection with code example, "Error path under
+      streaming" subsection clarifying the inherent
+      "bytes-on-wire cannot be rolled back" property, and
+      preserved "Future: request-side streaming" subsection
+      for the still-reserved `Base.read(req::Request, n::Integer)`
+      extension point. `docs/make.jl` pages array is
+      **unchanged** (no new docs page).
+- [x] Zero new `[deps]` — streaming primitive uses only
+      `Base` + M8 helpers. Principle I strictly upheld.
+      `[weakdeps]` / `[extensions]` unchanged (OpenSSL +
+      Reseau, both TLS backends).
+- [x] `src/serve.jl` untouched — FR-020 "zero existing-src
+      edits outside `src/handler.jl`" steady state preserved.
+      `src/PureHTTP2.jl` also untouched (no new exports —
+      `Base.flush` dispatch works without PureHTTP2 re-exporting
+      the name).
+- [x] `CHANGELOG.md` gains a `## [0.5.0] — 2026-04-13` section
+      with `### Added` (new `Base.flush` method + `examples/sse/`
+      + 8 new testitems), `### Changed` (updated mutator
+      contracts + docs promotion + `Response` fields +
+      `_finalize_response!` branch), and "Forward compatibility"
+      note about the still-reserved `Base.read(req, n)`
+      read-side streaming.
+
+**Exit criteria met**:
+
+- Main-env test suite: **24,910 pass / 0 fail / 0 broken**
+  (baseline 24,857 + 53 new streaming assertions across 8 new
+  `Handler:` items; handler testitem count grows 8 → 16).
+- Interop-env test suite: **25,060 pass / 1 pre-existing broken**
+  (same `Transport: ALPN helper stub (no extension)` item as
+  baseline — not regressed; the 53-item delta vs. M8's 25,007
+  is the new testitems_handler.jl items auto-discovered in the
+  cross-env test runner, **zero new `Interop:`-prefixed items
+  added**).
+- Documenter build: warning-free at v0.5.0. The new
+  `@docs Base.flush(::PureHTTP2.Response)` block resolves
+  without a "missing docstring" warning.
+- Manual SSE verification: `curl -N --http2-prior-knowledge
+  http://127.0.0.1:8787/ticks` against
+  `examples/sse/server.jl` shows all 5 ticks arriving
+  progressively over ~5 seconds with ~1-second gaps between
+  them, curl exits cleanly with status 0.
+- `examples/sse/server.jl` is 53 lines with **zero frame-layer
+  symbols** (`grep` check empty).
+- Three plan-level choices locked in:
+  (1) **terminal frame shape** = zero-length DATA +
+  `END_STREAM` on finalize-after-flush when body empty;
+  (2) **no `end_stream` kwarg** on `flush(res)` — always
+  non-terminal emission, single positional argument;
+  (3) **SSE unknown-path response** = standard `404` with
+  `text/plain` buffered body (doubles as a live FR-009
+  buffered-path exercise in the same file).
+
+---
+
+## Milestone 10 — gRPCServer.jl Reverse Integration
 
 **Status**: Not started
-**Target version**: → `v0.5.0`
+**Target version**: → `v0.6.0`
 
 Close the loop: make gRPCServer.jl consume PureHTTP2.jl as a dependency
 instead of vendoring its own copy. This is the acceptance test for
@@ -722,30 +912,40 @@ PureHTTP2.jl release with its HTTP/2 sources removed.
 
 ---
 
-## Future / Post-M9
+## Future / Post-M10
 
-Not scheduled — to be triaged after M9 lands. Items are grouped
+Not scheduled — to be triaged after M10 lands. Items are grouped
 by theme for readability; priority within each group is TBD.
 
-### Handler API follow-ups (from M8)
+### Handler API follow-ups (from M8 / M9)
 
-The M8 request-handler API deliberately shipped a buffered-body,
-single-task dispatch model as the MVP slice. The following
-items are **pure additions** — no symbol shipped in v0.4.0 will
-change signature, return type, or semantics when they land.
+The M8 request-handler API + M9 write-side streaming leave the
+read side (incremental request-body reads) reserved for a
+follow-up. The items below are **pure additions** — no symbol
+shipped in v0.4.0 / v0.5.0 will change signature, return type,
+or semantics when they land.
 
-- **Streaming request bodies** — incremental
-  `Base.read(req::Request, n::Integer) -> Vector{UInt8}` so
-  handlers can start processing before `END_STREAM` arrives.
-  Complement of the buffered `request_body(req)` accessor.
-  Forward-compat extension point reserved in M8 (see
-  `docs/src/handler.md` "Future: streaming"); deferred per the
-  Session 2026-04-13 clarification.
-- **Streaming response bodies** — `flush(res::Response)` to
-  emit currently-accumulated `res.body` as DATA frame(s) mid-
-  handler, clear the buffer, and let the handler keep writing.
-  Complement of the buffered `write_body!(res, bytes)` mutator.
-  Forward-compat extension point reserved in M8.
+- **Streaming request bodies** (still deferred) —
+  incremental `Base.read(req::Request, n::Integer) -> Vector{UInt8}`
+  so handlers can start processing the request body before
+  `END_STREAM` arrives. Complement of the buffered
+  `request_body(req)` accessor. Forward-compat extension point
+  reserved in M8 and still reserved after M9 — only the write
+  side shipped. When it lands, existing handlers calling
+  `request_body(req)` will continue to work unchanged; the new
+  method is a pure addition, not a replacement. See
+  `docs/src/handler.md` "Future: request-side streaming"
+  subsection for the current status.
+- **Streaming response bodies** — **SHIPPED at M9** as
+  `Base.flush(res::Response)`. See Milestone 9 above and
+  `examples/sse/` for the canonical use case.
+- **Streaming client reading** — a Julia-native client that
+  prints incoming DATA frames as they arrive (instead of
+  waiting for `END_STREAM` like `open_connection!` does).
+  Deferred because it depends on M9+ read-side client streaming,
+  which is not yet shipped. Today's SSE example uses `curl -N`
+  as the streaming client; once a Julia client exists, an
+  `examples/sse/client.jl` companion could ship alongside it.
 - **Per-stream `Task` concurrency** for `serve_with_handler!` —
   opt-in dispatch model so a handler that blocks on long-running
   IO (database query, upstream HTTP call) does not stall other
