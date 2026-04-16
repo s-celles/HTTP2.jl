@@ -4,11 +4,10 @@ JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Nghttp2Wrapper = "aac3f40a-7475-434e-9d89-bbdc1574c652"
 # OpenSSL is needed by the ALPN / TLS interop testitems
 # (`Interop: ALPN helper with OpenSSL extension` and
-# `Interop: set_alpn_h2! live TLS handshake`). At M5 it was
-# reached transitively via Nghttp2Wrapper's deps, but the [sources]
-# + Pkg.instantiate() flow in M7 only surfaces direct deps, so it
-# must be listed explicitly for `using OpenSSL` inside @testitem
-# blocks to resolve.
+# `Interop: set_alpn_h2! live TLS handshake`). Nghttp2Wrapper v0.2.0
+# migrated its own TLS layer to Reseau.jl, so OpenSSL is no longer
+# a transitive dep — it must be listed explicitly for `using OpenSSL`
+# inside @testitem blocks to resolve.
 OpenSSL = "4d8831e6-92b7-49fb-bdf8-b643e874388c"
 # Reseau provides the server-side ALPN select callback binding
 # missing from OpenSSL.jl; required by M7.5 interop items
@@ -19,16 +18,13 @@ Reseau = "802f3686-a58f-41ce-bb0c-3c43c75bba36"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
 
-# [sources] pins Nghttp2Wrapper to a specific git rev since the package
-# is not registered on the Julia General registry. Requires Julia ≥ 1.11
-# (this env's compat floor is 1.12). The `PureHTTP2` entry uses path="../.."
-# so CI can `Pkg.instantiate()` from a fresh checkout without a separate
-# `Pkg.develop(path=pwd())` step.
+# PureHTTP2 is not yet in the General registry; path source lets
+# CI `Pkg.instantiate()` without a separate `Pkg.develop()` step.
 [sources]
 PureHTTP2 = {path = "../.."}
-Nghttp2Wrapper = {url = "https://github.com/s-celles/Nghttp2Wrapper.jl", rev = "c2e2a06506faab7bf7eb0dec9fd6c7f34ab6941b"}
 
 [compat]
+Nghttp2Wrapper = "0.2"
 Reseau = "1"
 TestItemRunner = "1"
 julia = "1.12"
